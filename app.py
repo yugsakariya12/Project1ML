@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import pickle
+import joblib
 
-# --- Malware Imports ---
+# Malware functions
 from malware.analyzer import fetch_url_data, malware_risk_model
 
 
@@ -18,9 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- LOAD SPAM MODEL ----
-model = pickle.load(open("model.pkl", "rb"))
-vectorizer = pickle.load(open("vectorizer.pkl", "rb"))
+# ---- LOAD SPAM MODEL SAFELY ----
+model = joblib.load("model.pkl")
+vectorizer = joblib.load("vectorizer.pkl")
 
 # ---- REQUEST MODELS ----
 class Message(BaseModel):
@@ -42,30 +42,26 @@ def predict_spam(data: Message):
     confidence = round(proba * 100, 2)
     message = data.text.lower()
 
-    # --- CATEGORY DETECTION ---
+    # Category
     category = "Personal / Informational"
-
-    if any(word in message for word in ["free", "win", "offer", "discount", "sale", "deal"]):
+    if any(x in message for x in ["free", "win", "offer", "discount", "sale", "deal"]):
         category = "Promotional / Ads"
-
-    if any(word in message for word in ["loan", "credit", "invest", "upi", "bitcoin"]):
+    if any(x in message for x in ["loan", "credit", "invest", "upi", "bitcoin"]):
         category = "Financial / Loan Scam"
-
-    if any(word in message for word in ["package", "delivery", "customs", "shipment"]):
+    if any(x in message for x in ["package", "delivery", "customs", "shipment"]):
         category = "Delivery Scam / Logistics"
-
-    if any(word in message for word in ["account", "verify", "password", "otp", "kyc"]):
+    if any(x in message for x in ["account", "verify", "password", "otp", "kyc"]):
         category = "Banking / Verification Scam"
 
-    # --- RISK LEVEL ---
+    # Risk levels
     if confidence < 40:
-        risk = "Low"; emoji = "😊"
+        risk, emoji = "Low", "😊"
     elif confidence < 65:
-        risk = "Medium"; emoji = "😐"
+        risk, emoji = "Medium", "😐"
     elif confidence < 85:
-        risk = "High"; emoji = "😟"
+        risk, emoji = "High", "😟"
     else:
-        risk = "Very High"; emoji = "😱"
+        risk, emoji = "Very High", "😱"
 
     prediction_label = "SPAM" if prediction == 1 else "SAFE"
 
@@ -79,17 +75,17 @@ def predict_spam(data: Message):
 
 
 # ======================
-#  MALWARE DETECTION API
+#  MALWARE / PHISHING API
 # ======================
 @app.post("/predict-malware")
 def predict_malware(data: URLData):
-    result_data = fetch_url_data(data.url)
-    result = malware_risk_model(result_data)
+    raw_data = fetch_url_data(data.url)
+    result = malware_risk_model(raw_data)
 
     return {
         "url": data.url,
-        "prediction": result['prediction'],
-        "score": result['malware_score'],   # FIXED HERE
-        "confidence": result['confidence'],
-        "raw_data": result_data
+        "prediction": result["prediction"],
+        "score": result["malware_score"],
+        "confidence": result["confidence"],
+        "raw_data": raw_data
     }
