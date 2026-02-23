@@ -84,6 +84,9 @@ class Headline(BaseModel):
 # ======================
 # SPAM DETECTION (FIXED)
 # ======================
+# ======================
+# SPAM DETECTION (PROPER THRESHOLD FIX)
+# ======================
 @app.post("/predict")
 def predict_spam(data: Message):
     try:
@@ -92,22 +95,36 @@ def predict_spam(data: Message):
         if X.nnz == 0:
             return {
                 "prediction": "SAFE",
-                "confidence": 0.0,
+                "confidence": 0,
                 "risk": "Low"
             }
 
-        pred = spam_model.predict(X)[0]
+        # Use probability instead of raw decision score
+        if hasattr(spam_model, "predict_proba"):
+            proba = spam_model.predict_proba(X)[0][1]  # Spam probability
 
-        if hasattr(spam_model, "decision_function"):
-            score = spam_model.decision_function(X)[0]
-            confidence = round(abs(score), 2)
+            threshold = 0.7  # You can adjust this (0.6–0.8 recommended)
+
+            if proba >= threshold:
+                prediction = "SPAM"
+                risk = "High"
+            else:
+                prediction = "SAFE"
+                risk = "Low"
+
+            confidence = round(proba * 100, 2)
+
         else:
-            confidence = 0.0
+            # Fallback if model doesn't support predict_proba
+            pred = spam_model.predict(X)[0]
+            prediction = "SPAM" if pred == 1 else "SAFE"
+            confidence = 50
+            risk = "High" if pred == 1 else "Low"
 
         return {
-            "prediction": "SPAM" if pred == 1 else "SAFE",
+            "prediction": prediction,
             "confidence": confidence,
-            "risk": "High" if pred == 1 else "Low"
+            "risk": risk
         }
 
     except Exception as e:
@@ -123,9 +140,17 @@ def predict_malware(data: URLData):
         raw_data = fetch_url_data(data.url)
         result = malware_risk_model(raw_data)
 
+        prediction = result.get("prediction", "UNKNOWN")
+
+        # 🔥 Convert technical labels to user-friendly labels
+        if prediction.lower() == "benign":
+            prediction = "SAFE"
+        elif prediction.lower() == "malicious":
+            prediction = "MALICIOUS"
+
         return {
             "url": data.url,
-            "prediction": result.get("prediction", "UNKNOWN"),
+            "prediction": prediction,
             "score": result.get("malware_score", 0.0),
             "confidence": result.get("confidence", 0.0)
         }
@@ -133,7 +158,6 @@ def predict_malware(data: URLData):
     except Exception as e:
         print("❌ MALWARE ERROR:", e)
         raise
-
 # ======================
 # FAKE NEWS (❗UNCHANGED)
 # ======================
