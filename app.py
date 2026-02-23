@@ -92,33 +92,36 @@ def predict_spam(data: Message):
     try:
         X = spam_vectorizer.transform([data.text])
 
+        # If vector is empty → unknown words
         if X.nnz == 0:
             return {
                 "prediction": "SAFE",
-                "confidence": 0,
+                "confidence": 5,
                 "risk": "Low"
             }
 
-        # Use probability instead of raw decision score
         if hasattr(spam_model, "predict_proba"):
-            proba = spam_model.predict_proba(X)[0][1]  # Spam probability
+            proba = spam_model.predict_proba(X)[0][1]  # spam probability
 
-            threshold = 0.7  # You can adjust this (0.6–0.8 recommended)
+            # 🔥 More realistic threshold
+            threshold = 0.5  
 
-            if proba >= threshold:
-                prediction = "SPAM"
+            prediction = "SPAM" if proba >= threshold else "SAFE"
+
+            # 🔥 Risk logic based on probability
+            if proba >= 0.75:
                 risk = "High"
+            elif proba >= 0.5:
+                risk = "Medium"
             else:
-                prediction = "SAFE"
                 risk = "Low"
 
             confidence = round(proba * 100, 2)
 
         else:
-            # Fallback if model doesn't support predict_proba
             pred = spam_model.predict(X)[0]
             prediction = "SPAM" if pred == 1 else "SAFE"
-            confidence = 50
+            confidence = 60
             risk = "High" if pred == 1 else "Low"
 
         return {
@@ -129,8 +132,11 @@ def predict_spam(data: Message):
 
     except Exception as e:
         print("❌ SPAM ERROR:", e)
-        raise
-
+        return {
+            "prediction": "SAFE",
+            "confidence": 0,
+            "risk": "Low"
+        }
 # ======================
 # MALWARE / PHISHING (FIXED)
 # ======================
