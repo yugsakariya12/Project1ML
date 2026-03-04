@@ -100,35 +100,66 @@ class Headline(BaseModel):
 @app.post("/predict")
 def predict_spam(data: Message):
     try:
-        text = data.text.strip()
+        text = data.text.strip().lower()
+        words = text.split()
 
-        # Very short messages should be SAFE
-        if len(text.split()) <= 2:
+        # ----------------------------
+        # 1️⃣ Short casual messages → SAFE
+        # ----------------------------
+        if len(words) <= 3:
             return {
                 "prediction": "SAFE",
-                "confidence": 100,
+                "confidence": 95,
                 "risk": "Low"
             }
 
+        # ----------------------------
+        # 2️⃣ Strong spam keywords → SPAM
+        # ----------------------------
+        spam_keywords = [
+            "lottery","winner","claim","free money","prize",
+            "bank verify","account suspended","verify account",
+            "click here","urgent action","claim prize","limited offer"
+        ]
+
+        if any(k in text for k in spam_keywords):
+            return {
+                "prediction": "SPAM",
+                "confidence": 95,
+                "risk": "High"
+            }
+
+        # ----------------------------
+        # 3️⃣ Model prediction
+        # ----------------------------
         X = spam_vectorizer.transform([text])
-        probabilities = spam_model.predict_proba(X)[0]
+        probs = spam_model.predict_proba(X)[0]
 
-        # Since model classes are [0,1]
-        safe_prob = probabilities[0]   # class 0 = ham
-        spam_prob = probabilities[1]   # class 1 = spam
+        safe_prob = probs[0]
+        spam_prob = probs[1]
 
-        if spam_prob > safe_prob:
+        margin = spam_prob - safe_prob
+
+        print("SAFE_PROB:", safe_prob)
+        print("SPAM_PROB:", spam_prob)
+        print("MARGIN:", margin)
+
+        # ----------------------------
+        # 4️⃣ Decision using margin
+        # ----------------------------
+        if margin > 0.35:
             prediction = "SPAM"
-            confidence = round(spam_prob * 100, 2)
-            risk = "High" if spam_prob > 0.75 else "Medium"
+            risk = "High"
+        elif margin > 0.20:
+            prediction = "SPAM"
+            risk = "Medium"
         else:
             prediction = "SAFE"
-            confidence = round(safe_prob * 100, 2)
             risk = "Low"
 
         return {
             "prediction": prediction,
-            "confidence": confidence,
+            "confidence": round(spam_prob * 100, 2),
             "risk": risk
         }
 
