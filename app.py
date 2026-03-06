@@ -103,19 +103,21 @@ def predict_spam(data: Message):
         text = data.text.strip().lower()
         words = text.split()
 
-        # ----------------------------
-        # 1️⃣ Short casual messages → SAFE
-        # ----------------------------
+        # Short casual messages
         if len(words) <= 3:
-            return {
-                "prediction": "SAFE",
-                "confidence": 95,
-                "risk": "Low"
-            }
+            return {"prediction": "SAFE", "confidence": 95, "risk": "Low"}
 
-        # ----------------------------
-        # 2️⃣ Strong spam keywords → SPAM
-        # ----------------------------
+        # Legitimate keywords
+        safe_keywords = [
+            "otp","order","delivery","payment","appointment",
+            "meeting","train ticket","credited","statement",
+            "recharge","transaction","invoice","bill"
+        ]
+
+        if any(k in text for k in safe_keywords):
+            return {"prediction": "SAFE", "confidence": 90, "risk": "Low"}
+
+        # Strong spam keywords
         spam_keywords = [
             "lottery","winner","claim","free money","prize",
             "bank verify","account suspended","verify account",
@@ -123,34 +125,19 @@ def predict_spam(data: Message):
         ]
 
         if any(k in text for k in spam_keywords):
-            return {
-                "prediction": "SPAM",
-                "confidence": 95,
-                "risk": "High"
-            }
+            return {"prediction": "SPAM", "confidence": 95, "risk": "High"}
 
-        # ----------------------------
-        # 3️⃣ Model prediction
-        # ----------------------------
+        # Model prediction
         X = spam_vectorizer.transform([text])
         probs = spam_model.predict_proba(X)[0]
 
         safe_prob = probs[0]
         spam_prob = probs[1]
 
-        margin = spam_prob - safe_prob
-
-        print("SAFE_PROB:", safe_prob)
-        print("SPAM_PROB:", spam_prob)
-        print("MARGIN:", margin)
-
-        # ----------------------------
-        # 4️⃣ Decision using margin
-        # ----------------------------
-        if margin > 0.35:
+        if spam_prob > 0.80:
             prediction = "SPAM"
             risk = "High"
-        elif margin > 0.20:
+        elif spam_prob > 0.60:
             prediction = "SPAM"
             risk = "Medium"
         else:
@@ -164,12 +151,8 @@ def predict_spam(data: Message):
         }
 
     except Exception as e:
-        print("❌ SPAM ERROR:", e)
-        return {
-            "prediction": "ERROR",
-            "confidence": 0,
-            "risk": "Low"
-        }
+        print("SPAM ERROR:", e)
+        return {"prediction": "ERROR", "confidence": 0, "risk": "Low"}
 # =====================
 # MALWARE / PHISHING (FIXED)
 # ======================
