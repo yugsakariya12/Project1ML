@@ -78,7 +78,7 @@ print("✅ Spam vectorizer loaded")
 # 🔥 ADD THIS HERE
 print("MODEL CLASSES:", spam_model.classes_)
 print("NUMBER OF CLASSES:", len(spam_model.classes_))
-
+print(type(fake_news_model))
 # ======================
 # REQUEST SCHEMAS
 # ======================
@@ -199,41 +199,40 @@ def predict_malware(data: URLData):
 @app.post("/predict-fake-news")
 def predict_fake_news(data: Headline):
     try:
-        text = data.text.strip()
+        text = data.text.strip().lower()
 
         if not text:
-            return {
-                "prediction": "INVALID",
-                "confidence": 0
-            }
+            return {"prediction": "INVALID", "confidence": 0}
+
+        # basic cleaning
+        import re
+        text = re.sub(r"http\S+", "", text)
+        text = re.sub(r"[^a-zA-Z\s]", "", text)
 
         X = fake_news_vectorizer.transform([text])
 
-        prediction = fake_news_model.predict(X)[0]
         score = fake_news_model.decision_function(X)[0]
 
-        print("RAW SCORE:", score)
+        print("MODEL SCORE:", score)
 
-        # Convert margin to smoother confidence
-        confidence = round((abs(score) / 2) * 100, 2)
+        # convert to confidence
+        confidence = min(100, abs(score) * 50)
 
-        # Cap confidence at 100
-        if confidence > 100:
-            confidence = 100
-
-        # 🔥 Only uncertain if score extremely close to zero
-        if abs(score) < 0.1:
-            result = "UNCERTAIN"
+        # safer classification logic
+        if score < -0.6:
+            result = "FAKE"
         else:
-            result = "REAL" if prediction == 1 else "FAKE"
+            result = "REAL"
 
         return {
             "prediction": result,
-            "confidence": confidence
+            "confidence": round(confidence, 2)
         }
 
     except Exception as e:
         print("❌ FAKE NEWS ERROR:", e)
+        traceback.print_exc()
+
         return {
             "prediction": "ERROR",
             "confidence": 0
