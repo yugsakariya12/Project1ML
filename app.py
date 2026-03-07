@@ -162,10 +162,60 @@ def predict_spam(data: Message):
 @app.post("/predict-malware")
 def predict_malware(data: URLData):
     try:
-        raw_data = fetch_url_data(data.url)
+        url = data.url.lower()
+
+        # =========================
+        # SIMPLE PHISHING RULE CHECK
+        # =========================
+        suspicious_keywords = [
+            "login","verify","secure","account",
+            "update","billing","password","bank",
+            "claim","prize","offer"
+        ]
+
+        fake_brand_patterns = [
+            "amaz0n","paypaI","netfIix","go0gle",
+            "faceb00k","micr0soft","appIe"
+        ]
+
+        risky_tlds = [".xyz",".top",".gq",".cf",".ml",".tk"]
+
+        # Detect fake brand spelling
+        if any(b in url for b in fake_brand_patterns):
+            return {
+                "url": url,
+                "prediction": "MALICIOUS",
+                "risk_score": 85,
+                "confidence": 92,
+                "risk_level": "High"
+            }
+
+        # Detect phishing words
+        if any(word in url for word in suspicious_keywords):
+            return {
+                "url": url,
+                "prediction": "SUSPICIOUS",
+                "risk_score": 70,
+                "confidence": 85,
+                "risk_level": "Medium"
+            }
+
+        # Detect risky TLD
+        if any(url.endswith(tld) for tld in risky_tlds):
+            return {
+                "url": url,
+                "prediction": "SUSPICIOUS",
+                "risk_score": 65,
+                "confidence": 80,
+                "risk_level": "Medium"
+            }
+
+        # =========================
+        # CALL YOUR ORIGINAL MODEL
+        # =========================
+        raw_data = fetch_url_data(url)
         result = malware_risk_model(raw_data)
 
-        # Convert labels to frontend format
         prediction = result.get("prediction", "Unknown")
 
         if prediction.lower() == "benign":
@@ -176,7 +226,7 @@ def predict_malware(data: URLData):
             prediction = "SUSPICIOUS"
 
         return {
-            "url": data.url,
+            "url": url,
             "prediction": prediction,
             "risk_score": result.get("malware_score", 0),
             "confidence": result.get("confidence", 0),
@@ -186,6 +236,7 @@ def predict_malware(data: URLData):
     except Exception as e:
         print("❌ MALWARE ERROR:", e)
         traceback.print_exc()
+
         return {
             "url": data.url,
             "prediction": "ERROR",
