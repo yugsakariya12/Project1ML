@@ -71,7 +71,9 @@ app.add_middleware(
 # ======================
 spam_model = joblib.load(os.path.join(MODEL_DIR, "spam_model.pkl"))
 spam_vectorizer = joblib.load(os.path.join(MODEL_DIR, "spam_vectorizer.pkl"))
-
+# LOAD MALWARE MODEL
+malware_model = joblib.load(os.path.join(MODEL_DIR, "phishing_rf_model.pkl"))
+print("✅ Malware ML model loaded")
 print("✅ Spam model loaded")
 print("✅ Spam vectorizer loaded")
 
@@ -159,78 +161,49 @@ def predict_spam(data: Message):
 # ======================
 # MALWARE / PHISHING (FINAL TUNED VERSION)
 # ======================
+# ======================
+# MALWARE / PHISHING (ML MODEL)
+# ======================
 @app.post("/predict-malware")
 def predict_malware(data: URLData):
     try:
-        url = data.url.lower()
+        url = data.url.strip().lower()
 
-        # =========================
-        # SIMPLE PHISHING RULE CHECK
-        # =========================
-        suspicious_keywords = [
-            "login","verify","secure","account",
-            "update","billing","password","bank",
-            "claim","prize","offer"
-        ]
-
-        fake_brand_patterns = [
-            "amaz0n","paypaI","netfIix","go0gle",
-            "faceb00k","micr0soft","appIe"
-        ]
-
-        risky_tlds = [".xyz",".top",".gq",".cf",".ml",".tk"]
-
-        # Detect fake brand spelling
-        if any(b in url for b in fake_brand_patterns):
+        # Safety check
+        if not url:
             return {
                 "url": url,
-                "prediction": "MALICIOUS",
-                "risk_score": 85,
-                "confidence": 92,
-                "risk_level": "High"
+                "prediction": "INVALID",
+                "risk_score": 0,
+                "confidence": 0,
+                "risk_level": "Unknown"
             }
 
-        # Detect phishing words
-        if any(word in url for word in suspicious_keywords):
-            return {
-                "url": url,
-                "prediction": "SUSPICIOUS",
-                "risk_score": 70,
-                "confidence": 85,
-                "risk_level": "Medium"
-            }
+        # Model prediction
+        prediction = malware_model.predict([url])[0]
 
-        # Detect risky TLD
-        if any(url.endswith(tld) for tld in risky_tlds):
-            return {
-                "url": url,
-                "prediction": "SUSPICIOUS",
-                "risk_score": 65,
-                "confidence": 80,
-                "risk_level": "Medium"
-            }
+        # Try probability (not all models support it)
+        try:
+            prob = malware_model.predict_proba([url])[0].max()
+        except Exception:
+            prob = 0.75
 
-        # =========================
-        # CALL YOUR ORIGINAL MODEL
-        # =========================
-        raw_data = fetch_url_data(url)
-        result = malware_risk_model(raw_data)
+        # Normalize prediction text
+        pred_text = str(prediction).lower()
 
-        prediction = result.get("prediction", "Unknown")
-
-        if prediction.lower() == "benign":
-            prediction = "SAFE"
-        elif prediction.lower() == "malicious":
-            prediction = "MALICIOUS"
-        elif prediction.lower() == "suspicious":
-            prediction = "SUSPICIOUS"
+        if pred_text in ["1", "phishing", "malicious", "bad"]:
+            result = "MALICIOUS"
+            risk = "High"
+        else:
+            result = "SAFE"
+            risk = "Low"
 
         return {
             "url": url,
-            "prediction": prediction,
-            "risk_score": result.get("malware_score", 0),
-            "confidence": result.get("confidence", 0),
-            "risk_level": result.get("risk_level", "Unknown")
+            "prediction": result,
+            "risk_score": round(prob * 100, 2),
+            "confidence": round(prob * 100, 2),
+            "risk_level": risk
         }
 
     except Exception as e:
