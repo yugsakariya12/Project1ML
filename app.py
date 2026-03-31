@@ -4,7 +4,12 @@ from pydantic import BaseModel
 import joblib
 import os
 import traceback
-
+from fastapi import UploadFile, File
+from PIL import Image
+import numpy as np
+import tensorflow as tf
+import io
+import json
 # ======================
 # PATHS
 # ======================
@@ -14,7 +19,8 @@ MODEL_DIR = os.path.join(BASE_DIR, "models")
 # ======================
 # IMPORT LOGIC
 # ======================
-from malware.analyzer import fetch_url_data, malware_risk_model
+
+
 # ======================
 # LOAD FAKE NEWS MODEL
 # ======================
@@ -28,21 +34,8 @@ print("✅ Fake News model loaded")
 # ======================
 app = FastAPI()
 
-from fastapi import Request
-import traceback
-
-@app.middleware("http")
-async def log_exceptions(request: Request, call_next):
-    try:
-        return await call_next(request)
-    except Exception as e:
-        print("\n🔥🔥🔥 SERVER ERROR 🔥🔥🔥")
-        print("PATH:", request.url.path)
-        traceback.print_exc()
-        print("🔥🔥🔥 END ERROR 🔥🔥🔥\n")
-        raise e
 # ======================
-# GLOBAL ERROR LOGGER (MANDATORY)
+# GLOBAL ERROR LOGGER (FIXED: only one middleware)
 # ======================
 @app.middleware("http")
 async def log_exceptions(request: Request, call_next):
@@ -71,16 +64,38 @@ app.add_middleware(
 # ======================
 spam_model = joblib.load(os.path.join(MODEL_DIR, "spam_model.pkl"))
 spam_vectorizer = joblib.load(os.path.join(MODEL_DIR, "spam_vectorizer.pkl"))
+
 # LOAD MALWARE MODEL
 malware_model = joblib.load(os.path.join(MODEL_DIR, "phishing_rf_model.pkl"))
-print("✅ Malware ML model loaded")
+
+# ======================
+# LOAD IMAGE MODEL (FIXED POSITION)
+# NEW (replace with this)
+_new_model_path = os.path.join(MODEL_DIR, "phishing_model_final.keras")
+_old_model_path = os.path.join(MODEL_DIR, "phishing_model.h5")
+_threshold_path = os.path.join(MODEL_DIR, "threshold.json")
+
+if os.path.exists(_new_model_path):
+    image_model = tf.keras.models.load_model(_new_model_path)
+else:
+    image_model = tf.keras.models.load_model(_old_model_path)
+
+if os.path.exists(_threshold_path):
+    with open(_threshold_path) as f:
+        IMAGE_THRESHOLD = float(json.load(f)["threshold"])
+else:
+    IMAGE_THRESHOLD = 0.5
+
+print("✅ Image phishing model loaded")
 print("✅ Spam model loaded")
 print("✅ Spam vectorizer loaded")
+print("✅ Image phishing model loaded")
 
-# 🔥 ADD THIS HERE
+# DEBUG
 print("MODEL CLASSES:", spam_model.classes_)
 print("NUMBER OF CLASSES:", len(spam_model.classes_))
 print(type(fake_news_model))
+
 # ======================
 # REQUEST SCHEMAS
 # ======================
@@ -94,10 +109,7 @@ class Headline(BaseModel):
     text: str
 
 # ======================
-# SPAM DETECTION (FIXED)
-# ======================
-# ======================
-# SPAM DETECTION (PROPER THRESHOLD FIX)
+# SPAM DETECTION
 # ======================
 @app.post("/predict")
 def predict_spam(data: Message):
@@ -105,11 +117,9 @@ def predict_spam(data: Message):
         text = data.text.strip().lower()
         words = text.split()
 
-        # Short casual messages
         if len(words) <= 3:
             return {"prediction": "SAFE", "confidence": 95, "risk": "Low"}
 
-        # Legitimate keywords
         safe_keywords = [
             "otp","order","delivery","payment","appointment",
             "meeting","train ticket","credited","statement",
@@ -119,7 +129,6 @@ def predict_spam(data: Message):
         if any(k in text for k in safe_keywords):
             return {"prediction": "SAFE", "confidence": 90, "risk": "Low"}
 
-        # Strong spam keywords
         spam_keywords = [
             "lottery","winner","claim","free money","prize",
             "bank verify","account suspended","verify account",
@@ -129,11 +138,9 @@ def predict_spam(data: Message):
         if any(k in text for k in spam_keywords):
             return {"prediction": "SPAM", "confidence": 95, "risk": "High"}
 
-        # Model prediction
         X = spam_vectorizer.transform([text])
         probs = spam_model.predict_proba(X)[0]
 
-        safe_prob = probs[0]
         spam_prob = probs[1]
 
         if spam_prob > 0.80:
@@ -155,21 +162,15 @@ def predict_spam(data: Message):
     except Exception as e:
         print("SPAM ERROR:", e)
         return {"prediction": "ERROR", "confidence": 0, "risk": "Low"}
-# =====================
-# MALWARE / PHISHING (FIXED)
+
 # ======================
-# ======================
-# MALWARE / PHISHING (FINAL TUNED VERSION)
-# ======================
-# ======================
-# MALWARE / PHISHING (ML MODEL)
+# MALWARE
 # ======================
 @app.post("/predict-malware")
 def predict_malware(data: URLData):
     try:
         url = data.url.strip().lower()
 
-        # Safety check
         if not url:
             return {
                 "url": url,
@@ -179,16 +180,13 @@ def predict_malware(data: URLData):
                 "risk_level": "Unknown"
             }
 
-        # Model prediction
         prediction = malware_model.predict([url])[0]
 
-        # Try probability (not all models support it)
         try:
             prob = malware_model.predict_proba([url])[0].max()
         except Exception:
             prob = 0.75
 
-        # Normalize prediction text
         pred_text = str(prediction).lower()
 
         if pred_text in ["1", "phishing", "malicious", "bad"]:
@@ -217,8 +215,9 @@ def predict_malware(data: URLData):
             "confidence": 0,
             "risk_level": "Unknown"
         }
+
 # ======================
-# FAKE NEWS (❗UNCHANGED)
+# FAKE NEWS
 # ======================
 @app.post("/predict-fake-news")
 def predict_fake_news(data: Headline):
@@ -228,21 +227,15 @@ def predict_fake_news(data: Headline):
         if not text:
             return {"prediction": "INVALID", "confidence": 0}
 
-        # basic cleaning
         import re
         text = re.sub(r"http\S+", "", text)
         text = re.sub(r"[^a-zA-Z\s]", "", text)
 
         X = fake_news_vectorizer.transform([text])
-
         score = fake_news_model.decision_function(X)[0]
 
-        print("MODEL SCORE:", score)
-
-        # convert to confidence
         confidence = min(100, abs(score) * 50)
 
-        # safer classification logic
         if score < -0.6:
             result = "FAKE"
         else:
@@ -255,6 +248,40 @@ def predict_fake_news(data: Headline):
 
     except Exception as e:
         print("❌ FAKE NEWS ERROR:", e)
+        traceback.print_exc()
+
+        return {
+            "prediction": "ERROR",
+            "confidence": 0
+        }
+
+# ======================
+# IMAGE PHISHING DETECTION
+# ======================
+@app.post("/predict-image")
+async def predict_image(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        image = image.resize((224, 224))
+
+        img_array = np.array(image) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        phishing_prob = float(image_model.predict(img_array, verbose=0)[0][0])
+
+        print(f"RAW: {phishing_prob:.4f} | threshold: {IMAGE_THRESHOLD:.4f}")
+        result = "Phishing" if phishing_prob >= IMAGE_THRESHOLD else "Legitimate"
+        confidence = phishing_prob if result == "Phishing" else 1.0 - phishing_prob
+        return {
+              "prediction": result,
+               "confidence": round(confidence, 4),
+               "phishing_probability": round(phishing_prob, 4),
+               }
+
+    except Exception as e:
+        print("❌ IMAGE ERROR:", e)
         traceback.print_exc()
 
         return {
